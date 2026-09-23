@@ -17,10 +17,11 @@ import pandas as pd
 
 from sklearn.metrics import (
     f1_score,
-    precision_score,
-    recall_score,
+    roc_auc_score, 
+    classification_report, 
     accuracy_score,
-    roc_auc_score
+    recall_score,
+    precision_score
 )
 
 
