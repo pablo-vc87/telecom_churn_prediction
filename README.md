@@ -1,451 +1,324 @@
-# Interconnect Customer Churn Prediction
+# Telecom Customer Churn Prediction
 
-## Project Overview
+> Versión en español: [LEEME.md](LEEME.md)
 
-Interconnect is a telecommunications operator that wants to reduce customer churn by identifying customers who are likely to cancel their services.
+A binary classification project that predicts **which customers of a telecom operator are likely to cancel their service (churn)**, so that the company can offer them promotions before they leave.
 
-The goal of this project is to develop a machine learning classification model that can identify customers at risk of churn so that the company can proactively offer promotions, plan changes, or other retention strategies.
-
-The project focuses primarily on **ROC-AUC**, with **Recall** as an additional business-oriented metric because identifying customers who actually leave is particularly important for retention campaigns.
+The project integrates four data sources, builds a leakage-free **customer tenure** feature, and compares **12 model configurations** (4 models × 3 class-imbalance strategies) before tuning the best one. The selected model, **LightGBM with oversampling of the minority class**, achieved a **mean ROC-AUC of 0.9303 in 5-fold cross-validation** and **0.9411 ROC-AUC with 0.79 Recall on the independent test set**, well above the requirement of **ROC-AUC ≥ 0.75**.
 
 ---
 
-## Business Problem
+# Business Context
 
-Customer churn represents a significant challenge for telecommunications companies.
+Interconnect, a telecom operator, wants to reduce customer churn. If the company can identify in advance the customers who are about to leave, the marketing team can offer them promotions or special plans. A reliable model helps to:
 
-Instead of waiting until customers cancel their contracts, Interconnect wants to identify customers who are more likely to leave and intervene beforehand.
+* Focus retention campaigns on the customers with the highest risk.
+* Reduce the cost of offering discounts to customers who would stay anyway.
+* Understand which services and contract conditions are associated with churn.
 
-The machine learning solution should therefore:
+The model must predict one target:
 
-1. Identify customers at higher risk of churn.
-2. Distinguish between customers who are likely to stay and those who are likely to leave.
-3. Help the retention team prioritize customers for targeted interventions.
+| Target | Description |
+| --- | --- |
+| `churn` | 1 if the customer cancelled the service (`EndDate` is a date), 0 if the customer is still active (`EndDate = "No"`) |
 
 ---
 
-## Dataset
+# Churn Modeling Concepts
 
-The data is divided into four sources:
+| Term | Meaning |
+| --- | --- |
+| Churn | A customer who cancels the service |
+| Class imbalance | Only about 26.5% of customers churned, so a model can look accurate by predicting "no churn" for everyone |
+| Data leakage | Using information that would not be available at prediction time (for example, the cancellation date) |
+| Tenure | How long a customer has been with the company |
+| `class_weight` / `scale_pos_weight` | Giving more weight to the minority class during training |
+| Oversampling | Repeating minority-class rows in the training set so both classes are balanced |
+| Stratified split | Keeping the same churn proportion in train, validation, and test |
 
-### Contract Data
-
-`contract.csv`
-
-Contains information about:
-
-* Contract type
-* Billing method
-* Payment method
-* Monthly charges
-* Total charges
-* Contract start date
-* Contract end date
-
-### Personal Data
-
-`personal.csv`
-
-Contains customer information such as:
-
-* Gender
-* Senior citizen status
-* Partner
-* Dependents
-
-### Internet Data
-
-`internet.csv`
-
-Contains information about Internet services:
-
-* Internet service type
-* Online security
-* Online backup
-* Device protection
-* Technical support
-* Streaming TV
-* Streaming movies
-
-### Phone Data
-
-`phone.csv`
-
-Contains information about:
-
-* Multiple telephone lines
-
-The datasets are connected through the unique customer identifier:
+## Feature Groups
 
 ```text
-customer_id
+Contract:   type, paperless_billing, payment_method, monthly_charges, total_charges
+Personal:   gender, senior_citizen, partner, dependents
+Internet:   internet_service, online_security, online_backup, device_protection,
+            tech_support, streaming_tv, streaming_movies
+Phone:      multiple_lines
+Engineered: tenure_months
 ```
 
 ---
 
-## Project Workflow
+# Evaluation Metric
 
-The complete workflow was:
+The main metric is **ROC-AUC** (area under the ROC curve). It measures how well the model **ranks** churners above non-churners across all possible classification thresholds, so it does not depend on the chosen threshold and is robust to class imbalance.
+
+**Recall** is used as a secondary metric because, for retention, missing a customer who leaves is more costly than contacting one who would have stayed:
+
+$$
+\text{Recall} = \frac{\text{True Positives}}{\text{True Positives} + \text{False Negatives}}
+$$
+
+The project requirement was **ROC-AUC ≥ 0.75** on the test set. F1, Precision, and Accuracy were also recorded to interpret each model.
+
+---
+
+# Dataset
+
+The data come from four files linked by `customerID`.
+
+| File | Rows | Columns | Description |
+| --- | ---: | ---: | --- |
+| `datasets/final_provider/contract.csv` | 7,043 | 8 | Contract type, billing, payment method, charges, start and end dates |
+| `datasets/final_provider/personal.csv` | 7,043 | 5 | Customer demographics |
+| `datasets/final_provider/internet.csv` | 5,517 | 8 | Internet services (DSL or fiber optic, security, backup, streaming…) |
+| `datasets/final_provider/phone.csv` | 6,361 | 2 | Phone service (multiple lines) |
+
+* **7,043 customers** in total: 1,526 without internet service and 682 without phone service.
+* Customers started between **October 2013 and February 2020**; all cancellations happened between **October 2019 and January 2020**.
+* Churn rate: **1,869 customers (26.5%)** churned and **5,174 (73.5%)** stayed.
+
+**Data source.** The datasets were provided by **TripleTen** as part of its Data Science Bootcamp and are included in this repository for educational and reproducibility purposes.
+
+---
+
+# Project Workflow
 
 ```text
-Raw Data
-   │
-   ▼
-Data Loading
-   │
-   ▼
-Exploratory Data Analysis
-   │
-   ▼
-Data Cleaning
-   │
-   ▼
-Target Creation
-   │
-   ▼
-Merge Four Data Sources
-   │
-   ▼
-Feature Engineering
-   │
-   ├── tenure_months
-   │
-   ▼
-Train / Validation / Test Split
-   │
-   ▼
-One-Hot Encoding
-   │
-   ▼
-Baseline Models
-   │
-   ├── Logistic Regression
-   ├── LinearSVC
-   ├── Random Forest
-   └── LightGBM
-   │
-   ▼
-Class Imbalance Experiments
-   │
-   ├── No balancing
-   ├── Class weighting
-   └── Oversampling
-   │
-   ▼
-LightGBM Hyperparameter Tuning
-   │
-   ▼
-5-Fold Stratified Cross-Validation
-   │
-   ▼
-Final Model
-   │
-   ▼
-TEST Evaluation
-   │
-   ▼
-ROC-AUC = 0.941063
+Raw data (4 files)
+            │
+            ▼
+1. Data preparation
+   ├── snake_case column names, dates, numeric total_charges
+   ├── Target: churn = EndDate is not "No"
+   └── Left joins on customer_id + missing values from the joins
+            │
+            ▼
+2. Feature engineering: tenure_months (without future information)
+            │
+            ▼
+3. Stratified split: 75% train / 15% validation / 10% test + One-Hot Encoding
+            │
+            ▼
+4. Modeling
+   ├── Experiment 1: 4 models × 3 imbalance strategies (12 configurations)
+   ├── Experiment 2: LightGBM with vs without tenure_months
+   ├── Experiment 3: LightGBM hyperparameter searches
+   ├── 5-fold stratified cross-validation (oversampling inside each fold)
+   └── Retrain on train + validation and evaluate once on test
 ```
 
 ---
 
-# Exploratory Data Analysis
+# 1. Data Preparation
 
-The four datasets were first inspected individually to understand their structure, data types, missing values, duplicates, and distributions.
-
-The datasets were then merged using `customer_id`, with the contract dataset used as the main table.
-
-A one-to-one relationship was validated during the merge process to ensure that the integration did not unexpectedly duplicate customers.
-
-The final dataset contained:
-
-```text
-7,043 customers
-```
-
-The target variable showed an imbalanced distribution:
-
-```text
-Active customers: approximately 73.5%
-Churned customers: approximately 26.5%
-```
-
-This imbalance was considered during model development.
+* Column names were converted to `snake_case`.
+* `begin_date` and `end_date` were parsed as dates (format `YYYY-MM-DD`). `end_date = "No"` means the customer is still active.
+* `total_charges` had **11 empty values**, all from customers who signed up on February 1, 2020 and had not received their first bill yet. They were set to **0**.
+* "Yes"/"No" columns were converted to 1/0.
+* The four tables were joined to `contract` with left joins on `customer_id`, checking one-to-one relationships (`validate='one_to_one'`).
+* Missing values created by the joins mean that the customer does not have that service:
+  * Internet service columns → **0**, and `internet_service` → **"No internet"** (1,526 customers).
+  * `multiple_lines` → **0** (682 customers without phone service).
+* `customer_id`, `begin_date`, `end_date`, and `churn` were excluded from the features.
 
 ---
 
-# Data Preprocessing
+# 2. Feature Engineering: Customer Tenure
 
-## Target Variable
+`tenure_months` estimates how long each customer has been with the company. It was calculated **without using the cancellation date**:
 
-The original contract information contained the customer's end date.
+| Option | What it represents | Usable? |
+| --- | --- | --- |
+| `end_date − begin_date` | Final length of the relationship, known only after the customer leaves | ❌ Future information |
+| `end_date` | When the churn happened | ❌ Direct leakage |
+| `cutoff_date − begin_date` | Tenure up to a common cutoff date | ✅ |
 
-The target variable was created as:
-
-```text
-churn = 0 → customer remains active
-churn = 1 → customer has churned
-```
-
-The end date itself was not used as a predictive feature because it directly contains information about the churn event and could introduce target leakage.
-
----
-
-## Missing Values
-
-Missing values generated during the merge were analyzed according to their business meaning.
-
-For example, missing Internet service-related values represented customers who did not have Internet service.
-
-These values were therefore transformed according to their meaning:
-
-* Binary service variables → `0`
-* `internet_service` → `"No internet"`
-
-Missing values in `multiple_lines` were interpreted as customers without multiple phone lines and encoded accordingly.
-
----
-
-# Feature Engineering
-
-## Customer Tenure
-
-A `tenure_months` feature was created to represent the approximate length of the customer's relationship with the company.
-
-The feature was deliberately calculated using a common reference date rather than the customer's churn date.
-
-This avoids directly using future churn information when estimating customer tenure.
-
-The feature was tested both with and without the model.
-
-The comparison showed that `tenure_months` provided a substantial improvement in predictive performance and was therefore retained in the final model.
-
----
-
-# Categorical Encoding
-
-The main categorical variables were:
-
-```text
-gender
-type
-payment_method
-internet_service
-```
-
-They were transformed using One-Hot Encoding:
+The cutoff date is the latest `begin_date` in the data (**2020-02-01**):
 
 ```python
-OneHotEncoder(handle_unknown='ignore')
+fecha_corte = df['begin_date'].max()
+df['tenure_months'] = (fecha_corte - df['begin_date']).dt.days / 30.44
 ```
 
-This transformation allowed categorical information to be represented numerically while also handling categories that could appear in validation or test data but were not observed during training.
+The resulting feature ranges from **0 to 76 months**, with a mean of **33.1 months**.
 
 ---
 
-# Train / Validation / Test Split
+# 3. Data Split and Encoding
 
-The data was divided using a stratified split:
+The data were split with `stratify` so that every set keeps the 26.5% churn rate:
 
 ```text
-75% → Training
-15% → Validation
-10% → Test
+100% of the data (7,043 customers)
+│
+├── 75% TRAIN ─────────→ 5,282 customers → model training
+├── 15% VALIDATION ────→ 1,056 customers → model and hyperparameter selection
+└── 10% TEST ──────────→   705 customers → final evaluation (used only once)
 ```
 
-Stratification was used to preserve the proportion of churned and active customers across the datasets.
+The categorical variables (`gender`, `type`, `payment_method`, `internet_service`) were encoded with `OneHotEncoder(handle_unknown='ignore')` inside a `ColumnTransformer`, fitted **only on the training set**. The final matrix has **26 features**.
 
-The test set was kept separate throughout model selection and hyperparameter tuning.
-
----
-
-# Baseline Models
-
-Several classification algorithms were evaluated:
-
-* Logistic Regression
-* LinearSVC
-* Random Forest
-* LightGBM
-
-The initial comparison showed that LightGBM achieved the strongest ROC-AUC performance.
-
-Approximate validation ROC-AUC results were:
-
-| Model               | Validation ROC-AUC |
-| ------------------- | -----------------: |
-| LightGBM            |         ~0.92–0.93 |
-| Random Forest       |              ~0.86 |
-| Logistic Regression |              ~0.84 |
-| LinearSVC           |              ~0.83 |
-
-These results motivated further optimization of the LightGBM model.
+For oversampling, the churn rows of the training set were repeated 3 times (from 1,402 to 4,206 churners vs 3,880 non-churners). Validation and test were never modified.
 
 ---
 
-# Handling Class Imbalance
+# 4. Modeling
 
-Three strategies were evaluated:
+## Experiment 1: Models and Imbalance Strategies
 
-1. No class balancing.
-2. Class weighting.
-3. Oversampling of the minority class.
+Four models were trained with three strategies each: **no balancing**, **class weights** (`class_weight='balanced'`, or `scale_pos_weight ≈ 2.77` for LightGBM), and **oversampling**.
 
-Oversampling produced the strongest ROC-AUC results for the selected LightGBM configuration.
+| Model | No balancing | Class weight | Oversampling |
+| --- | ---: | ---: | ---: |
+| **LightGBM** | 0.9239 | 0.9201 | **0.9274** |
+| Random Forest | 0.8607 | 0.8581 | 0.8607 |
+| Logistic Regression | 0.8344 | 0.8339 | 0.8337 |
+| LinearSVC | 0.8320 | 0.8333 | 0.8328 |
 
-The minority class was therefore oversampled during training.
+*Validation ROC-AUC.*
 
-Importantly, oversampling was applied only to training data and not to validation or test data.
+* **LightGBM** was clearly the best model, which suggests non-linear relationships between the features and churn.
+* Balancing **increased Recall** in every model (for Logistic Regression, from about 0.54 to 0.77) at the cost of lower Precision, while **ROC-AUC barely changed**: balancing moves the decision threshold, but the ranking of customers stays almost the same.
+* Accuracy was not used as the main metric: the unbalanced models had the highest Accuracy because they mostly predicted the majority class.
 
-During cross-validation, oversampling was also performed independently inside each training fold to prevent information leakage.
+## Experiment 2: Impact of `tenure_months`
 
----
+| LightGBM (oversampling) | Validation ROC-AUC |
+| --- | ---: |
+| With `tenure_months` | **0.9274** |
+| Without `tenure_months` | 0.8256 |
 
-# Hyperparameter Optimization
+Removing tenure reduced ROC-AUC by about **0.10**, so the feature was kept.
 
-LightGBM hyperparameters were progressively evaluated.
+## Experiment 3: Hyperparameter Tuning (LightGBM + oversampling)
 
-The final configuration selected for the model was:
+| Search | What changed | Best configuration | Best Validation ROC-AUC |
+| --- | --- | --- | ---: |
+| 1 | `n_estimators` (100–300) and `num_leaves` (15, 31, 63), `learning_rate = 0.05` | 300 trees, 31 leaves | 0.9314 |
+| 2 | `min_child_samples` from 10 to 100, with 300 trees and 63 leaves | `min_child_samples = 75` | 0.9355 |
+| 3 | `min_child_samples` from 40 to 90 around the best value | `min_child_samples = 75` | 0.9355 |
 
-```python
-LGBMClassifier(
-    n_estimators=300,
-    learning_rate=0.05,
-    num_leaves=63,
-    max_depth=-1,
-    min_child_samples=75,
-    random_state=42,
-    verbosity=-1
-)
-```
+In search 1, 31 leaves gave a slightly higher ROC-AUC than 63 leaves (0.9314 vs 0.9296). The second search kept **63 leaves** because the larger trees can be regularized with `min_child_samples`; with `min_child_samples = 75` they surpassed the first search (0.9355).
 
-The model was trained using:
-
-* One-Hot Encoded features
-* `tenure_months`
-* Oversampling
-* LightGBM
-
----
-
-# Cross-Validation
-
-Before performing the final test evaluation, the selected model was evaluated using **5-fold stratified cross-validation**.
-
-Results:
-
-|          Fold |      ROC-AUC |
-| ------------: | -----------: |
-|             1 |     0.922171 |
-|             2 |     0.923144 |
-|             3 |     0.925368 |
-|             4 |     0.951454 |
-|             5 |     0.929531 |
-|      **Mean** | **0.930334** |
-| **Std. Dev.** | **0.012142** |
-
-The average ROC-AUC of **0.930334** indicates strong performance across different subsets of the training data.
-
-The standard deviation of **0.012142** indicates that the model's performance remained relatively stable across folds.
-
----
-
-# Final Model
-
-After model selection and cross-validation, the final model was retrained using the combined training and validation datasets.
-
-The test dataset remained untouched until this final evaluation.
-
----
-
-# Final Test Results
-
-The final model achieved:
-
-| Metric      |  Test Result |
-| ----------- | -----------: |
-| **ROC-AUC** | **0.941063** |
-| **Recall**  | **0.791444** |
-| F1          |     0.800000 |
-| Precision   |     0.808743 |
-| Accuracy    |     0.895035 |
-
-### ROC-AUC
-
-The final **ROC-AUC of 0.941063** indicates that the model has a high ability to distinguish between customers who churn and customers who remain active.
-
-This result is substantially above the project's minimum target of 0.75.
-
-### Recall
-
-The final Recall was:
+Final configuration:
 
 ```text
-0.791444
+LGBMClassifier(n_estimators=300, learning_rate=0.05, num_leaves=63,
+               max_depth=-1, min_child_samples=75, random_state=42)
 ```
 
-This means that the model correctly identifies approximately **79.1% of customers who actually churn** using the selected classification threshold.
+## Cross-Validation
 
-From a business perspective, this is particularly relevant because the retention team wants to identify customers before they leave.
+Before using the test set, the final configuration was checked with **5-fold stratified cross-validation** on the training set. Oversampling was applied **inside each fold**, only on the fold's training part, so no duplicated row appears in both training and validation.
+
+| Fold | ROC-AUC |
+| ---: | ---: |
+| 1 | 0.9222 |
+| 2 | 0.9231 |
+| 3 | 0.9254 |
+| 4 | 0.9515 |
+| 5 | 0.9295 |
+| **Mean ± std** | **0.9303 ± 0.0121** |
+
+## Final Result
+
+The model was retrained on **train + validation** (with oversampling) and evaluated **once** on the test set:
+
+```text
+Model:          LightGBM + oversampling
+CV ROC-AUC:     0.9303 ± 0.0121
+Test ROC-AUC:   0.9411
+Test Recall:    0.7914
+Test F1:        0.8000
+Test Precision: 0.8087
+Test Accuracy:  0.8950
+Requirement:    ROC-AUC ≥ 0.75   ✓
+```
+
+On the 705 test customers, the model identified about **79% of the 187 customers who churned**, and about 81% of the customers it flagged as churners actually left.
 
 ---
 
-# Business Impact
+# Conclusions
 
-The model can be used as a customer-retention prioritization tool.
+1. **Integrating the four sources required interpreting missing values correctly**: a customer missing from the internet or phone table simply does not have that service.
 
-Instead of contacting every customer with the same strategy, Interconnect could use the model's churn probabilities to identify customers with higher estimated risk.
+2. **`tenure_months` was the most informative feature.** Building it with a common cutoff date, instead of the cancellation date, avoided data leakage; removing it lowered ROC-AUC from 0.927 to 0.826.
 
-Potential actions include:
+3. **LightGBM clearly outperformed the other models** (validation ROC-AUC around 0.92–0.93 vs 0.86 for Random Forest and 0.83 for the linear models).
 
-* Personalized retention offers.
-* Discounts or temporary benefits.
-* Contract or plan recommendations.
-* Proactive customer support.
-* Service-quality follow-ups.
-* Targeted marketing campaigns.
+4. **Balancing the classes mainly changed Recall, not ROC-AUC.** Oversampling gave the best ROC-AUC for LightGBM and was kept for the final model.
 
-The model should be considered a decision-support tool rather than a deterministic prediction system.
+5. **The result is stable and above the requirement**: cross-validation gave 0.9303 ± 0.0121 and the test set gave **0.9411 ROC-AUC with 0.79 Recall**.
 
-A Recall of approximately 79.1% also means that some customers who eventually churn will not be identified by the model at the selected threshold. Therefore, the model should be combined with business rules, customer history, campaign constraints, and other relevant information.
+## Business Interpretation
+
+With a Recall of about 79%, the model detects roughly 79 of every 100 customers who are going to leave, so the marketing team can prioritize them for offers, plan changes, or a direct call. About 21% of churners would still be missed with the current threshold, so the model should support retention decisions, not replace them.
+
+## Next Steps
+
+* Tune the classification threshold according to the cost of a retention offer versus the cost of losing a customer.
+* Analyze feature importance to explain which contract conditions and services drive churn.
+* Note: an earlier version of the notebook parsed the dates as `YYYY-DD-MM`. The current version uses the correct format; the LightGBM results did not change, because the error preserved the order of `tenure_months`.
 
 ---
 
-# Key Findings
-
-### 1. Customer tenure was highly informative
-
-The `tenure_months` feature produced a substantial improvement in model performance.
-
-Models without this feature performed considerably worse than equivalent models using it.
-
-### 2. LightGBM performed best
-
-LightGBM consistently outperformed Logistic Regression, LinearSVC, and Random Forest in ROC-AUC.
-
-### 3. Class imbalance mattered
-
-Testing different strategies showed that oversampling the minority class improved the selected LightGBM configuration.
-
-### 4. Cross-validation confirmed model stability
-
-The model achieved:
+# Project Structure
 
 ```text
-CV ROC-AUC = 0.930334 ± 0.012142
+telecom_churn_prediction/
+│
+├── datasets/
+│   └── final_provider/
+│       ├── contract.csv
+│       ├── internet.csv
+│       ├── personal.csv
+│       └── phone.csv
+│
+├── notebooks/
+│   └── telecom_churn_prediction.ipynb
+│
+├── src/
+│   └── funciones_personales.py
+│
+├── .gitignore
+├── environment.yml
+├── requirements.txt
+├── LEEME.md
+└── README.md
 ```
 
-across five stratified folds.
+---
 
-### 5. The final test result exceeded the project target
+# Installation
 
-The final model achieved:
+Clone the repository:
 
-```text
-TEST ROC-AUC = 0.941063
+```bash
+git clone https://github.com/pablo-vc87/telecom_churn_prediction.git
+
+cd telecom_churn_prediction
 ```
 
-which is well above the required minimum of 0.75.
+## Option 1: Conda
+
+```bash
+conda env create -f environment.yml
+conda activate telecom_churn_prediction
+jupyter notebook
+```
+
+## Option 2: pip
+
+Create and activate a virtual environment, then:
+
+```bash
+pip install -r requirements.txt
+jupyter notebook
+```
+
+Open `notebooks/telecom_churn_prediction.ipynb` and run all cells.
 
 ---
 
@@ -454,181 +327,33 @@ which is well above the required minimum of 0.75.
 * Python
 * Pandas
 * NumPy
-* Scikit-learn
+* scikit-learn
 * LightGBM
-* Matplotlib
-* Seaborn
 * Jupyter Notebook
 
 ---
 
-# Machine Learning Techniques
+# Skills Demonstrated
 
-* Exploratory Data Analysis
-* Data Cleaning
-* Feature Engineering
-* Binary Classification
-* One-Hot Encoding
-* Stratified Train/Validation/Test Split
-* Oversampling
-* Hyperparameter Optimization
-* Stratified K-Fold Cross-Validation
-* ROC-AUC
-* Recall
-* Precision
-* F1 Score
-* Accuracy
+* Integration of multiple data sources
+* Interpretation of missing values after joins
+* Leakage-free feature engineering (customer tenure)
+* Binary classification with class imbalance
+* Class weights and oversampling
+* One-Hot Encoding with `ColumnTransformer`
+* Model comparison: Logistic Regression, LinearSVC, Random Forest, and LightGBM
+* Hyperparameter tuning
+* Stratified cross-validation with oversampling inside the folds
+* ROC-AUC, Recall, Precision, and F1 evaluation
 
 ---
 
-# Project Structure
+## Author
 
-```text
-interconnect-customer-churn/
-│
-├── data/
-│   └── final_provider/
-│       ├── contract.csv
-│       ├── personal.csv
-│       ├── internet.csv
-│       └── phone.csv
-│
-├── notebooks/
-│   └── telecom_churn_prediction.ipynb
-│
-├── README.md
-├── requirements.txt
-```
+**Pablo Andrés Vázquez Calva**
 
----
+Data Scientist
 
-# Conclusion
+GitHub: https://github.com/pablo-vc87
 
-The project successfully developed a machine learning solution for customer churn prediction at Interconnect.
-
-The final LightGBM model achieved a **ROC-AUC of 0.941063 on the unseen test set** and a **Recall of 0.791444**.
-
-The combination of feature engineering, categorical encoding, class balancing, model comparison, hyperparameter optimization, and cross-validation resulted in a model capable of effectively distinguishing customers at higher risk of churn.
-
-The model can therefore serve as a foundation for a proactive customer-retention strategy, allowing Interconnect to prioritize customers according to their estimated churn risk and potentially intervene before cancellation occurs.
-
----
-
-# Reproducibility
-
-The project is designed to be fully reproducible from the provided notebook and dependency file.
-
-The notebook can be executed from beginning to end using **Run All** without requiring manual intervention between sections.
-
-## Requirements
-
-The project dependencies are listed in:
-
-```text
-requirements.txt
-```
-
-The project does not require an `environment.yml` file.
-
-The main libraries used in the project include:
-
-* Python
-* Pandas
-* NumPy
-* Scikit-learn
-* LightGBM
-* Matplotlib
-* Seaborn
-* Jupyter Notebook
-
-## Installation
-
-Create and activate a Python environment, then install the required dependencies:
-
-```bash
-python -m venv .venv
-```
-
-Activate the environment on Linux/macOS:
-
-```bash
-source .venv/bin/activate
-```
-
-On Windows:
-
-```bash
-.venv\Scripts\activate
-```
-
-Then install the project dependencies:
-
-```bash
-pip install -r requirements.txt
-```
-
-## Running the Project
-
-Open the project notebook:
-
-```text
-notebooks/telcom_churn_prediction.ipynb
-```
-
-Make sure the required dataset files are available under:
-
-```text
-data/final_provider/
-```
-
-The notebook is structured so that all preprocessing, feature engineering, model training, validation, cross-validation, and final evaluation are executed sequentially.
-
-To reproduce the complete analysis:
-
-1. Install the dependencies from `requirements.txt`.
-2. Open the notebook in Jupyter Notebook, JupyterLab, or VS Code.
-3. Verify that the dataset paths point to the files in `data/final_provider/`.
-4. Run the notebook using **Run All**.
-
-No intermediate notebook outputs or manually generated variables are required before execution.
-
-## Reproducibility Considerations
-
-Random seeds were explicitly defined in the main train/validation/test split, oversampling procedure, cross-validation, and LightGBM model.
-
-The main random seed used throughout the project is:
-
-```python
-random_state=54321
-```
-
-and the final LightGBM model uses:
-
-```python
-random_state=42
-```
-
-These settings help reproduce the same data partitions and model results when the same software environment and dataset are used.
-
-## Expected Final Result
-
-After running the complete notebook, the final model should produce performance close to the reported test results:
-
-| Metric    | Expected Test Result |
-| --------- | -------------------: |
-| ROC-AUC   |         **0.941063** |
-| Recall    |         **0.791444** |
-| F1        |         **0.800000** |
-| Precision |         **0.808743** |
-| Accuracy  |         **0.895035** |
-
-The model's 5-fold cross-validation result was:
-
-```text
-Mean ROC-AUC: 0.930334
-Standard deviation: 0.012142
-```
-
-Small differences in execution time or floating-point results may occur depending on the Python version, package versions, operating system, and hardware.
-
-The reported metrics correspond to the original project execution environment and dataset.
+LinkedIn: https://www.linkedin.com/in/pablo-avc/
